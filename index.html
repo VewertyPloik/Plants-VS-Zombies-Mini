@@ -99,7 +99,7 @@
   const CELL_W = 85, CELL_H = 100;
   const GRID_X = 10, GRID_Y = 10;
 
-  const TOTAL_WAVES = 20;
+  const TOTAL_WAVES = 16;
   const START_SUN = 10;
   const START_HP = 5;
 
@@ -272,19 +272,35 @@
     suns.push({ x, y: -20, vy: 0.3, type: "sky" });
   }
 
-  function spawnZombie() {
-    const r = Math.floor(Math.random() * ROWS);
-    const y = GRID_Y + r * CELL_H + CELL_H / 2;
-    const x = canvas.width + 40;
+function spawnZombie() {
+  const r = Math.floor(Math.random() * ROWS);
+  const y = GRID_Y + r * CELL_H + CELL_H / 2;
+  const x = canvas.width + 40;
 
-    // Speed doubles every wave but capped after wave 4
-    const effectiveWave = Math.min(currentWave, 4);
-    const baseSpeed = 0.02 * Math.pow(2, effectiveWave - 1);
+  // Base speed before wave 15
+  let speedBaseWave = Math.min(currentWave, 4);
+  let baseSpeed = 0.02 * Math.pow(2, speedBaseWave - 1);
 
-    const types = ['🧟', '🧟‍♀️', '🧟‍♂️'];
-    const emoji = types[Math.floor(Math.random() * types.length)];
-    zombies.push({ x, y, r, speed: baseSpeed, hp: 3, emoji, attackAccum: 0 });
-    zombiesSpawned++;
+  // At wave 15, speed doubles (2x)
+  if (currentWave >= 15) {
+    baseSpeed *= 2;
+  }
+
+  // Base health is 3, increased by 0.2x per wave starting wave 5 to 15 max
+  let healthMultiplier = 1;
+  if (currentWave >= 5 && currentWave <= 15) {
+    healthMultiplier += 0.2 * (currentWave - 4); // +0.2 per wave starting at wave 5
+  } else if (currentWave > 15) {
+    healthMultiplier += 0.2 * (15 - 4); // capped at wave 15 scaling
+  }
+  const hp = 3 * healthMultiplier;
+
+  const types = ['🧟', '🧟‍♀️', '🧟‍♂️'];
+  const emoji = types[Math.floor(Math.random() * types.length)];
+  zombies.push({ x, y, r, speed: baseSpeed, hp, emoji, attackAccum: 0 });
+  zombiesSpawned++;
+}
+
   }
 
   function firePea(r, c, upgraded) {
