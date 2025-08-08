@@ -165,6 +165,7 @@
         resetGame();
       } else if (text.startsWith("Wave")) {
         currentWave++;
+        waveText.textContent = `Wave: ${currentWave} / ${TOTAL_WAVES}`;
         prepareTimer = 5000;
         preparing = true;
         waveActive = false;
