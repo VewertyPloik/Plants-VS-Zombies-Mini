@@ -277,28 +277,16 @@ function spawnZombie() {
   const y = GRID_Y + r * CELL_H + CELL_H / 2;
   const x = canvas.width + 40;
 
-  // Base speed before wave 15
-  let speedBaseWave = Math.min(currentWave, 4);
-  let baseSpeed = 0.02 * Math.pow(2, speedBaseWave - 1);
-
-  // At wave 15, speed doubles (2x)
-  if (currentWave >= 15) {
-    baseSpeed *= 2;
-  }
-
-  // Base health is 3, increased by 0.2x per wave starting wave 5 to 15 max
-  let healthMultiplier = 1;
-  if (currentWave >= 5 && currentWave <= 15) {
-    healthMultiplier += 0.2 * (currentWave - 4); // +0.2 per wave starting at wave 5
-  } else if (currentWave > 15) {
-    healthMultiplier += 0.2 * (15 - 4); // capped at wave 15 scaling
-  }
-  const hp = 3 * healthMultiplier;
+  // Speed doubles every wave but capped after wave 4
+  const effectiveWave = Math.min(currentWave, 4);
+  const baseSpeed = 0.02 * Math.pow(2, effectiveWave - 1);
 
   const types = ['🧟', '🧟‍♀️', '🧟‍♂️'];
   const emoji = types[Math.floor(Math.random() * types.length)];
-  zombies.push({ x, y, r, speed: baseSpeed, hp, emoji, attackAccum: 0 });
+  zombies.push({ x, y, r, speed: baseSpeed, hp: 3, emoji, attackAccum: 0 });
   zombiesSpawned++;
+}
+
 }
 
   }
