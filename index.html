@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Plants VS Zombies Mini </title>
+<style>
+  body {
+    margin: 0; background: linear-gradient(#a9e4ff, #dff7ff);
+    font-family: Arial, sans-serif;
+    user-select: none;
+  }
+  #ui {
+    display: flex;
+    justify-content: space-between;
+    background: #fff;
+    padding: 8px 12px;
+    font-weight: bold;
+    font-size: 18px;
+    border-bottom: 2px solid #ccc;
+    gap: 15px;
+  }
+  #game {
+    display: flex;
+    padding: 12px;
+    gap: 10px;
+  }
+  #leftPanel {
+    width: 220px;
+  }
+  button {
+    width: 100%;
+    font-size: 16px;
+    padding: 10px;
+    margin-bottom: 10px;
+    cursor: pointer;
+  }
+  #message {
+    font-size: 14px;
+    margin-top: 10px;
+  }
+  #canvasWrap {
+    background: linear-gradient(#7adf3b, #3fb011);
+    padding: 10px;
+    border-radius: 8px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.2);
+  }
+  canvas {
+    border-radius: 6px;
+    background: linear-gradient(#76c24d, #4aa02b);
+    image-rendering: pixelated;
+    display: block;
+  }
+  #popup {
+    position: fixed;
+    top: 40%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(50,50,50,0.9);
+    color: white;
+    font-size: 36px;
+    padding: 30px 50px;
+    border-radius: 12px;
+    box-shadow: 0 0 15px black;
+    z-index: 1000;
+    display: none;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <div>☀️ Sun: <span id="sunVal">5</span></div>
+  <div id="waveText">Wave: 1 / 20</div>
+  <div id="zombieCount">Zombies Left: 0</div>
+  <div id="status">Status: Preparing</div>
+  <div>❤️ HP: <span id="hpVal">5</span></div>
+</div>
+
+<div id="game">
+  <div id="leftPanel">
+    <button id="selectPea">🫛 Pea Shooter (3 Sun)</button>
+    <button id="selectSunflower">🌻 Sunflower (2 Sun)</button>
+    <button id="selectPie">🥧 Pie Bomb (4 Sun)</button>
+    <button id="selectUpPea">🫛 (Upgraded) Pea Shooter (5 Sun)</button>
+    <div id="message">Select a plant, then click a grid cell to place. Click ☀️ to collect sun.</div>
+  </div>
+  <div id="canvasWrap">
+    <canvas id="c" width="1000" height="600"></canvas>
+  </div>
+</div>
+
+<div id="popup"></div>
+
+<script>
+(() => {
+  const ROWS = 5, COLS = 9;
+  const CELL_W = 85, CELL_H = 100;
+  const GRID_X = 10, GRID_Y = 10;
+
+  const TOTAL_WAVES = 20;
+  const START_SUN = 10;
+  const START_HP = 5;
+
+  let sun = START_SUN;
+  let playerHP = START_HP;
+  let currentWave = 1;
+  let preparing = true;
+  let prepareTimer = 5000;
+  let waveActive = false;
+  let selected = null;
+
+  let grid = Array.from({length: ROWS}, () => Array(COLS).fill(null));
+  let suns = [];
+  let zombies = [];
+  let projectiles = [];
+
+  let zombiesSpawned = 0;
+  let zombiesToSpawn = 0;
+  let lastSunDrop = 0;
+  let lastSunflowerDrop = 0;
+  let lastZombieSpawn = 0;
+
+  const sunVal = document.getElementById('sunVal');
+  const waveText = document.getElementById('waveText');
+  const status = document.getElementById('status');
+  const hpVal = document.getElementById('hpVal');
+  const message = document.getElementById('message');
+  const popup = document.getElementById('popup');
+  const zombieCount = document.getElementById('zombieCount');
+
+  const costs = {
+    pea: 10,
+    sunflower: 5,
+    pie: 8,
+    uppea: 20,
+  };
+
+  // Dynamically update button text with costs:
+  document.getElementById('selectPea').textContent = `🫛 Pea Shooter (${costs.pea} Sun)`;
+  document.getElementById('selectSunflower').textContent = `🌻 Sunflower (${costs.sunflower} Sun)`;
+  document.getElementById('selectPie').textContent = `🥧 Pie Bomb (${costs.pie} Sun)`;
+  document.getElementById('selectUpPea').textContent = `🫛 (Upgraded) Pea Shooter (${costs.uppea} Sun)`;
+
+  // ... rest of your script unchanged ...
+
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+
+  function drawHP(ctx, x, y, w, h, hp, maxHp) {
+    ctx.fillStyle = 'red';
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = 'limegreen';
+    ctx.fillRect(x, y, w * (hp / maxHp), h);
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y, w, h);
+  }
+
+  function showPopup(text) {
+    gamePaused = true;
+    popup.textContent = text;
+    popup.style.display = 'block';
+    setTimeout(() => {
+      popup.style.display = 'none';
+      if (text === "YOU WON!") {
+        updateHighScore(currentWave);
+        incrementWins();
+        resetGame();
+      } else if (text.startsWith("You died")) {
+        updateHighScore(currentWave);
+        resetGame();
+      } else if (text.startsWith("Wave")) {
+        currentWave++;
+        waveText.textContent = `Wave: ${currentWave} / ${TOTAL_WAVES}`;
+        prepareTimer = 5000;
+        preparing = true;
+        waveActive = false;
+      }
+      gamePaused = false;
+    }, 3000);
+  }
+
+  function updateHighScore(wave) {
+    const hs = getHighScore();
+    if (wave > hs) localStorage.setItem('pvz_highscore', wave);
+  }
+  function getHighScore() {
+    return parseInt(localStorage.getItem('pvz_highscore')) || 0;
+  }
+  function incrementWins() {
+    let wins = parseInt(localStorage.getItem('pvz_wins')) || 0;
+    wins++;
+    localStorage.setItem('pvz_wins', wins);
+  }
+
+  function resetGame() {
+    sun = START_SUN;
+    playerHP = START_HP;
+    currentWave = 1;
+    preparing = true;
+    prepareTimer = 5000;
+    waveActive = false;
+    zombiesSpawned = 0;
+    zombiesToSpawn = 0;
+    grid = Array.from({length: ROWS}, () => Array(COLS).fill(null));
+    suns = [];
+    zombies = [];
+    projectiles = [];
+    sunVal.textContent = sun;
+    hpVal.textContent = playerHP;
+    waveText.textContent = `Wave: ${currentWave} / ${TOTAL_WAVES}`;
+    zombieCount.textContent = `Zombies Left: 0`;
+    status.textContent = 'Status: Preparing';
+    message.textContent = 'Select a plant, then click a grid cell to place. Click ☀️ to collect sun.';
+    selected = null;
+  }
+
+  canvas.addEventListener('click', e => {
+    if (gamePaused) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    // Check click suns first (collect)
+    for (let i = suns.length - 1; i >= 0; i--) {
+      const s = suns[i];
+      if (mx >= s.x - 15 && mx <= s.x + 15 && my >= s.y - 20 && my <= s.y + 10) {
+        sun++;
+        sunVal.textContent = sun;
+        suns.splice(i, 1);
+        return;
+      }
+    }
+
+    // Place plants on grid
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const x = GRID_X + c * CELL_W;
+        const y = GRID_Y + r * CELL_H;
+        if (mx >= x && mx < x + CELL_W && my >= y && my < y + CELL_H) {
+          placePlant(r, c);
+          return;
+        }
+      }
+    }
+  });
+
+  function placePlant(r, c) {
+    if (!selected) {
+      message.textContent = "Select a plant first.";
+      return;
+    }
+    if (grid[r][c]) {
+      message.textContent = "That spot is occupied.";
+      return;
+    }
+    if (sun < costs[selected]) {
+      message.textContent = "Not enough Sun!";
+      return;
+    }
+    sun -= costs[selected];
+    sunVal.textContent = sun;
+
+    if (selected === 'pea') {
+      grid[r][c] = { type: 'pea', hp: 3, shootTimer: 0 };
+    } else if (selected === 'uppea') {
+      grid[r][c] = { type: 'uppea', hp: 3, shootTimer: 0 };
+    } else if (selected === 'sunflower') {
+      grid[r][c] = { type: 'sunflower', hp: 3, collectTimer: 0 };
+    } else if (selected === 'pie') {
+      grid[r][c] = { type: 'pie', hp: 1 };
+    }
+    message.textContent = "Plant placed!";
+  }
+
+  // ... (rest of your code unchanged, including update, draw, etc.)
+
+  // Buttons event handlers
+  document.getElementById('selectPea').onclick = () => {
+    selected = 'pea';
+    message.textContent = "Selected Pea Shooter";
+  };
+  document.getElementById('selectSunflower').onclick = () => {
+    selected = 'sunflower';
+    message.textContent = "Selected Sunflower";
+  };
+  document.getElementById('selectPie').onclick = () => {
+    selected = 'pie';
+    message.textContent = "Selected Pie Bomb";
+  };
+  document.getElementById('selectUpPea').onclick = () => {
+    selected = 'uppea';
+    message.textContent = "Selected Upgraded Pea Shooter";
+  };
+
+  // Game loop
+  let lastTime = 0;
+  let gamePaused = false;
+  function loop(time = 0) {
+    const dt = time - lastTime;
+    lastTime = time;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  resetGame();
+  loop();
+
+})();
+</script>
+
+</body>
+</html>
