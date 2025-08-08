@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Mini PvZ-like Game with Tractor</title>
+<style>
+  html,body {
+    height:100%;
+    margin:0;
+    background: linear-gradient(#a9e4ff, #dff7ff);
+    font-family: Arial, Helvetica, sans-serif;
+    user-select:none;
+  }
+  #ui {
+    display:flex;
+    gap:12px;
+    align-items:center;
+    padding:8px;
+    background: rgba(255,255,255,0.85);
+    border-bottom: 2px solid #ccc;
+    font-weight: bold;
+    font-size: 18px;
+  }
+  button {
+    font-size: 16px;
+    padding: 8px 14px;
+    border-radius: 6px;
+    border: 1px solid #888;
+    cursor: pointer;
+    background: white;
+    width: 210px;
+    text-align: left;
+  }
+  #game {
+    display: flex;
+    gap: 12px;
+    padding: 12px;
+  }
+  #leftPanel {
+    width: 210px;
+  }
+  #canvasWrap {
+    background: linear-gradient(#76c24d, #4aa02b);
+    padding: 10px;
+    border-radius: 8px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.2);
+  }
+  canvas {
+    background: linear-gradient(#7adf3b, #3fb011);
+    display: block;
+    border-radius: 6px;
+    image-rendering: pixelated;
+  }
+</style>
+</head>
+<body>
+  <div id="ui">
+    <div id="sunCount">☀️ Sun: <span id="sunVal">5</span></div>
+    <div id="waveText">Wave: 1 / 20</div>
+    <div id="status">Status: Preparing</div>
+    <div id="tractorHealth" style="margin-left: auto; font-weight: normal; font-size: 16px;">🚜 HP: <span id="tractorHpVal">3</span></div>
+  </div>
+  <div id="game">
+    <div id="leftPanel">
+      <button id="selectPea">🫛 Pea Shooter<br><span>Cost: 3</span></button>
+      <button id="selectSunflower">🌻 Sunflower<br><span>Cost: 2</span></button>
+      <button id="selectPie">🥧 Pie Bomb<br><span>Cost: 4</span></button>
+      <button id="selectUpPea">🫛 (Upgraded)<br><span>Cost: 5</span></button>
+      <div id="message" style="margin-top: 10px; font-size: 14px;">Select a plant and click a grid cell to place. Click ☀️ to collect sun.</div>
+    </div>
+    <div id="canvasWrap">
+      <canvas id="c" width="1000" height="600"></canvas>
+    </div>
+  </div>
+<script>
+const ROWS=5, COLS=9, CELL_W=85, CELL_H=100, GRID_X=10, GRID_Y=10;
+const START_SUN=5, TOTAL_WAVES=20;
+let sun=START_SUN, currentWave=1, preparing=true, prepareTimer=5000, waveActive=false;
+let selected=null;
+let grid=Array.from({length:ROWS},()=>Array(COLS).fill(null));
+let suns = [], projectiles = [], zombies = [];
+// Tractor starts alive on left with 3 HP
+let tractor = { hp: 3, active: true, x: 0, row: -1, moving: false };
+
+let lastTick = performance.now();
+let lastSunDrop = 0, lastZombieSpawn = 0;
+let zombiesSpawned = 0, zombiesToSpawn = 0;
+
+const sunVal = document.getElementById('sunVal');
+const waveText = document.getElementById('waveText');
+const status = document.getElementById('status');
+const message = document.getElementById('message');
+const tractorHpVal = document.getElementById('tractorHpVal');
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+ctx.textBaseline = 'middle';
+ctx.textAlign = 'center';
+
+const costs = { pea: 3, sun: 2, pie: 4, uppea: 5 };
+
+document.getElementById('selectPea').onclick = () => selected = 'pea';
+document.getElementById('selectSunflower').onclick = () => selected = 'sun';
+document.getElementById('selectPie').onclick = () => selected = 'pie';
+document.getElementById('selectUpPea').onclick = () => selected = 'uppea';
+
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  // Check if clicked on a grid cell to place plant
+  for(let r=0; r<ROWS; r++) {
+    for(let c=0; c<COLS; c++) {
+      const x = GRID_X + c*CELL_W;
+      const y = GRID_Y + r*CELL_H;
+      if(mx >= x && mx < x + CELL_W && my >= y && my < y + CELL_H) {
+        placeAt(r, c);
+        return;
+      }
+    }
+  }
+  // Check if clicked on any falling sun to collect
+  for(let i = suns.length - 1; i >= 0; i--) {
+    const s = suns[i];
+    if(mx >= s.x - 18 && mx <= s.x + 18 && my >= s.y - 18 && my <= s.y + 18) {
+      sun++;
+      sunVal.textContent = sun;
+      suns.splice(i, 1);
+      return;
+    }
+  }
+});
+
+function placeAt(r, c) {
+  if(!selected) return;
+  if(grid[r][c]) {
+    showMessage("That spot is already occupied.");
+    return;
+  }
+  if(sun < costs[selected]) {
+    showMessage("Not enough Sun!");
+    return;
+  }
+  sun -= costs[selected];
+  sunVal.textContent = sun;
+
+  if(selected === 'pea') grid[r][c] = { type: 'pea', hp: 3, shootTimer: 0 };
+  if(selected === 'uppea') grid[r][c] = { type: 'uppea', hp: 3, shootTimer: 0 };
+  if(selected === 'sun') grid[r][c] = { type: 'sunflower', hp: 3, collectTimer: 0 };
+  if(selected === 'pie') grid[r][c] = { type: 'pie', hp: 1 };
+}
+
+function showMessage(txt) {
+  message.textContent = txt;
+  setTimeout(() => {
+    if(message.textContent === txt) message.textContent = "Select a plant and click a grid cell to place. Click ☀️ to collect sun.";
+  }, 2500);
+}
+
+function spawnSun() {
+  const x = GRID_X + Math.random() * (COLS * CELL_W);
+  suns.push({ x, y: -20, vy: 0.15, emoji: '☀️' });
+}
+
+function spawnZombie() {
+  const r = Math.floor(Math.random() * ROWS);
+  const y = GRID_Y + r * CELL_H + CELL_H / 2;
+  const x = canvas.width + 40;
+  // 10x slower base speed, increasing with waves
+  const baseSpeed = 0.03;
+  const speed = baseSpeed + (currentWave - 1) * 0.01;
+  const types = ['🧟', '🧟‍♀️', '🧟‍♂️'];
+  const emoji = types[Math.floor(Math.random() * types.length)];
+  zombies.push({ x, y, r, speed, hp: 3, emoji, attackAccum: 0 });
+  zombiesSpawned++;
+}
+
+function firePea(r, c, upgraded) {
+  const sx = GRID_X + c * CELL_W + CELL_W - 10;
+  const sy = GRID_Y + r * CELL_H + CELL_H / 2;
+  projectiles.push({ x: sx, y: sy, vx: 0.6, row: r, dmg: upgraded ? 2 : 1 });
+}
+
+function triggerTractor(row) {
+  if(!tractor.moving && tractor.active) {
+    tractor.moving = true;
+    tractor.row = row;
+    tractor.x = 0;
+  }
+}
+
+function update(dt) {
+  lastSunDrop += dt;
+  if(lastSunDrop > 2000) {
+    spawnSun();
+    lastSunDrop = 0;
+  }
+
+  // Sunflowers generate suns
+  for(let r=0; r<ROWS; r++) {
+    for(let c=0; c<COLS; c++) {
+      const p = grid[r][c];
+      if(p && p.type === 'sunflower') {
+        p.collectTimer += dt;
+        if(p.collectTimer >= 3000) {
+          p.collectTimer = 0;
+          suns.push({ x: GRID_X + c * CELL_W + CELL_W / 2 + (Math.random()*20 - 10), y: GRID_Y + r * CELL_H + 10, vy: 0.12, emoji: '☀️' });
+        }
+      }
+    }
+  }
+
+  // Wave prep and spawning logic
+  if(preparing) {
+    status.textContent = `Status: Preparing (${Math.ceil(prepareTimer / 1000)}s)`;
+    prepareTimer -= dt;
+    if(prepareTimer <= 0) {
+      preparing = false;
+      waveActive = true;
+      zombiesSpawned = 0;
+      zombiesToSpawn = 6 + Math.floor((currentWave - 1) * 0.8);
+      lastZombieSpawn = 0;
+    }
+  } else if(waveActive) {
+    status.textContent = 'Status: Wave Active';
+    lastZombieSpawn += dt;
+    const spawnInterval = Math.max(600, 4000 - (currentWave - 1) * 180);
+    if(lastZombieSpawn > spawnInterval && zombiesSpawned < zombiesToSpawn) {
+      spawnZombie();
+      lastZombieSpawn = 0;
+    }
+
+    // Check wave end
+    if(zombiesSpawned >= zombiesToSpawn && zombies.length === 0) {
+      waveActive = false;
+      if(currentWave >= TOTAL_WAVES) {
+        status.textContent = 'Status: You Win!';
+        showMessage("You beat wave 20 — You Win!");
+      } else {
+        currentWave++;
+        waveText.textContent = `Wave: ${currentWave} / ${TOTAL_WAVES}`;
+        preparing = true;
+        prepareTimer = 5000;
+      }
+    }
+  }
+
+  // Update suns (falling)
+  for(let i = suns.length - 1; i >= 0; i--) {
+    const s = suns[i];
+    s.y += s.vy * dt;
+    if(s.y > canvas.height - 30) s.y = canvas.height - 30;
+  }
+
+  // Update projectiles
+  for(let i = projectiles.length - 1; i >= 0; i--) {
+    const p = projectiles[i];
+    p.x += p.vx * dt;
+    for(let j = zombies.length - 1; j >= 0; j--) {
+      const z = zombies[j];
+      if(z.r === p.row && Math.abs(p.x - z.x) < 18) {
+        z.hp -= p.dmg;
+        projectiles.splice(i, 1);
+        if(z.hp <= 0) zombies.splice(j, 1);
+        break;
+      }
+    }
+    if(projectiles[i] && p.x > canvas.width + 50) projectiles.splice(i, 1);
+  }
+
+  // Update zombies
+  for(let i = zombies.length - 1; i >= 0; i--) {
+    const z = zombies[i];
+    z.x -= z.speed * dt;
+
+    // Zombie reached left end — triggers tractor if alive and not moving
+    if(z.x < 0) {
+      if(tractor.active && !tractor.moving) triggerTractor(z.r);
+      zombies.splice(i, 1);
+      continue;
+    }
+
+    // If tractor is on this row and moving, check collision with zombie for instant kill
+    if(tractor.moving && tractor.row === z.r) {
+      if(z.x < tractor.x + 120 && z.x > tractor.x - 60) {
+        zombies.splice(i, 1);
+        continue;
+      }
+    }
+
+    // Determine which col zombie is attacking
+    const col = Math.floor((z.x - GRID_X) / CELL_W);
+
+    // Attack plants if within 1 block for 3 seconds
+    let attackedPlant = false;
+    for(let dc = 0; dc <= 1; dc++) {
+      const cc = col - dc;
+      if(cc >= 0 && cc < COLS) {
+        const p = grid[z.r][cc];
+        if(p && p.type !== 'pie') {
+          p.attackAccum = (p.attackAccum || 0) + dt;
+          if(p.attackAccum >= 1000) { // faster plant damage: 1 sec per hit
+            p.hp--;
+            p.attackAccum = 0;
+            if(p.hp <= 0) {
+              grid[z.r][cc] = null;
+              showMessage("A plant was destroyed!");
+            }
+          }
+          attackedPlant = true;
+          break;
+        }
+      }
+    }
+
+    // Attack tractor if zombie is at left edge and tractor is alive but not moving
+    if(!attackedPlant && z.x < GRID_X && tractor.active && !tractor.moving) {
+      tractor.hp -= dt / 1000 * 1; // 1 HP per second damage from zombie on tractor
+      if(tractor.hp <= 0) {
+        tractor.active = false;
+        showMessage("Your tractor was destroyed!");
+      }
+    } else if(!attackedPlant) {
+      // Reset attack accumulator if not attacking plant
+      for(let c=0; c<COLS; c++) {
+        const p = grid[z.r][c];
+        if(p) p.attackAccum = 0;
+      }
+    }
+
+    // Check pie bombs explode if zombie near
+    for(let c=0; c<COLS; c++) {
+      const p = grid[z.r][c];
+      if(p && p.type === 'pie') {
+        const pieX = GRID_X + c * CELL_W + CELL_W / 2;
+        if(Math.abs(z.x - pieX) < CELL_W + 10) {
+          grid[z.r][c] = null;
+          zombies.splice(i, 1);
+          showMessage("Pie bomb exploded!");
+          break;
+        }
+      }
+    }
+  }
+
+  // Update tractor movement and kill zombies on its row
+  if(tractor.moving && tractor.active) {
+    tractor.x += 0.6 * dt;
+    for(let i = zombies.length - 1; i >= 0; i--) {
+      const z = zombies[i];
+      if(z.r === tractor.row && z.x < tractor.x + 120 && z.x > tractor.x - 60) {
+        zombies.splice(i, 1);
+      }
+    }
+    if(tractor.x > canvas.width + 200) tractor.moving = false;
+  }
+
+  // Plants shooting peas
+  for(let r=0; r<ROWS; r++) {
+    for(let c=0; c<COLS; c++) {
+      const p = grid[r][c];
+      if(p && (p.type === 'pea' || p.type === 'uppea')) {
+        p.shootTimer += dt;
+        const cooldown = p.type === 'uppea' ? 1500 : 3000;
+        if(p.shootTimer >= cooldown) {
+          p.shootTimer = 0;
+          // Shoot only if zombie is ahead in same row
+          if(zombies.some(z => z.r === r && z.x > GRID_X + c * CELL_W)) {
+            firePea(r, c, p.type === 'uppea');
+          }
+        }
+      }
+    }
+  }
+
+  tractorHpVal.textContent = Math.max(0, Math.floor(tractor.hp));
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Draw grid and plants
+  ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+  for(let r=0; r<ROWS; r++) {
+    for(let c=0; c<COLS; c++) {
+      const x = GRID_X + c * CELL_W;
+      const y = GRID_Y + r * CELL_H;
+      ctx.strokeRect(x, y, CELL_W - 2, CELL_H - 2);
+      const p = grid[r][c];
+      if(p) {
+        ctx.font = '48px Arial';
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'center';
+        if(p.type === 'pea' || p.type === 'uppea') {
+          if(p.type === 'uppea') {
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(x + 6, y + 6, CELL_W - 14, CELL_H - 14);
+          }
+          ctx.fillStyle = 'black';
+          ctx.fillText('🫛', x + CELL_W / 2, y + CELL_H / 2);
+          drawHP(ctx, x + 8, y + 8, CELL_W - 24, 8, p.hp, 3);
+        } else if(p.type === 'sunflower') {
+          ctx.fillText('🌻', x + CELL_W / 2, y + CELL_H / 2);
+          drawHP(ctx, x + 8, y + 8, CELL_W - 24, 8, p.hp, 3);
+        } else if(p.type === 'pie') {
+          ctx.fillText('🥧', x + CELL_W / 2, y + CELL_H / 2);
+        }
+      }
+    }
+  }
+
+  // Draw projectiles
+  for(const pr of projectiles) {
+    ctx.beginPath();
+    ctx.fillStyle = 'green';
+    ctx.arc(pr.x, pr.y, 8, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Draw zombies
+  for(const z of zombies) {
+    ctx.font = '42px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(z.emoji, z.x, GRID_Y + z.r * CELL_H + CELL_H / 2);
+    drawHP(ctx, z.x - 30, GRID_Y + z.r * CELL_H + 6, 60, 8, z.hp, 3);
+  }
+
+  // Draw suns
+  for(const s of suns) {
+    ctx.font = '28px Arial';
+    ctx.fillText(s.emoji, s.x, s.y);
+  }
+
+  // Draw tractor on left if alive and not moving
+  if(tractor.active && !tractor.moving) {
+    ctx.save();
+    ctx.translate(20, canvas.height/2);
+    ctx.scale(-1, 1);
+    ctx.font = '48px Arial';
+    ctx.fillText('🚜', 0, 0);
+    ctx.restore();
+    drawHP(ctx, 10, canvas.height/2 + 30, 80, 10, tractor.hp, 3);
+  }
+
+  // Draw moving tractor
+  if(tractor.active && tractor.moving) {
+    ctx.save();
+    ctx.translate(tractor.x, GRID_Y + tractor.row * CELL_H + CELL_H / 2);
+    ctx.scale(-1, 1);
+    ctx.font = '48px Arial';
+    ctx.fillText('🚜', 0, 0);
+    ctx.restore();
+    drawHP(ctx, tractor.x - 40, GRID_Y + tractor.row * CELL_H + CELL_H / 2 + 40, 80, 10, tractor.hp, 3);
+  }
+}
+
+function drawHP(ctx, x, y, w, h, hp, maxHp) {
+  ctx.fillStyle = 'red';
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = 'limegreen';
+  const fillW = (hp / maxHp) * w;
+  ctx.fillRect(x, y, fillW, h);
+  ctx.strokeStyle = 'black';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, w, h);
+}
+
+function loop(now) {
+  const dt = now - lastTick;
+  lastTick = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+waveText.textContent = `Wave: ${currentWave} / ${TOTAL_WAVES}`;
+tractorHpVal.textContent = tractor.hp;
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
