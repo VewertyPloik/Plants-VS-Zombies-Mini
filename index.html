@@ -66,6 +66,10 @@
     display: none;
     text-align: center;
   }
+  .selectedButton {
+    border: 3px solid lightblue;
+    border-radius: 6px;
+  }
 </style>
 </head>
 <body>
@@ -208,6 +212,7 @@
     status.textContent = `Status: Preparing (5s)`;
     message.textContent = 'Select a plant, then click a grid cell to place. Click ☀️ to collect sun.';
     selected = null;
+    document.querySelectorAll('#leftPanel button').forEach(b => b.classList.remove('selectedButton'));
   }
 
   canvas.addEventListener('click', e => {
@@ -266,6 +271,10 @@
       grid[r][c] = { type: 'pie', hp: 1 };
     }
     message.textContent = "Plant placed!";
+
+    // Deselect after placement
+    selected = null;
+    document.querySelectorAll('#leftPanel button').forEach(b => b.classList.remove('selectedButton'));
   }
 
   function spawnSunFromSky() {
@@ -471,8 +480,7 @@
     ctx.lineWidth = 2;
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
-        const x = GRID_X + c * CELL_W;
-        const y = GRID_Y + r * CELL_H;
+        const x = GRID_X + c * CELL_W;         const y = GRID_Y + r * CELL_H;
         ctx.strokeRect(x, y, CELL_W, CELL_H);
       }
     }
@@ -536,22 +544,24 @@
   }
 
   // Buttons
-  document.getElementById('selectPea').onclick = () => {
-    selected = 'pea';
-    message.textContent = "Selected Pea Shooter";
-  };
-  document.getElementById('selectSunflower').onclick = () => {
-    selected = 'sunflower';
-    message.textContent = "Selected Sunflower";
-  };
-  document.getElementById('selectPie').onclick = () => {
-    selected = 'pie';
-    message.textContent = "Selected Pie Bomb";
-  };
-  document.getElementById('selectUpPea').onclick = () => {
-    selected = 'uppea';
-    message.textContent = "Selected Upgraded Pea Shooter";
-  };
+  function selectPlant(type) {
+    selected = type;
+    message.textContent = `Selected ${type === 'pea' ? 'Pea Shooter' : type === 'uppea' ? 'Upgraded Pea Shooter' : type === 'sunflower' ? 'Sunflower' : 'Pie Bomb'}`;
+
+    // Remove highlight from all buttons
+    document.querySelectorAll('#leftPanel button').forEach(b => b.classList.remove('selectedButton'));
+
+    // Add highlight to selected
+    if (type === 'pea') document.getElementById('selectPea').classList.add('selectedButton');
+    else if (type === 'uppea') document.getElementById('selectUpPea').classList.add('selectedButton');
+    else if (type === 'sunflower') document.getElementById('selectSunflower').classList.add('selectedButton');
+    else if (type === 'pie') document.getElementById('selectPie').classList.add('selectedButton');
+  }
+
+  document.getElementById('selectPea').onclick = () => selectPlant('pea');
+  document.getElementById('selectUpPea').onclick = () => selectPlant('uppea');
+  document.getElementById('selectSunflower').onclick = () => selectPlant('sunflower');
+  document.getElementById('selectPie').onclick = () => selectPlant('pie');
 
   // Game loop
   let lastTime = 0;
